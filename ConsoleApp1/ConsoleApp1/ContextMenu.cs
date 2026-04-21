@@ -2,29 +2,31 @@ using Microsoft.Win32;
 
 namespace Wcc;
 
-/// <summary>
-/// Installs/uninstalls a cascading "Convert with WCC" context-menu entry for
-/// recognised video and audio file extensions. Uses HKCU so no admin required.
-///
-/// Layout per extension:
-///   HKCU\Software\Classes\SystemFileAssociations\.ext\shell\WCC
-///       MUIVerb     = "Convert with WCC"
-///       subcommands = ""                (empty -> cascade enabled)
-///       Icon        = "<exe>,0"
-///       shell\
-///           01_mp4\
-///               MUIVerb = "To MP4"
-///               command\(default) = "<exe>" convert "%1" mp4
-///           02_mkv\ ...
-/// </summary>
+// handles writing and removing the right-click menu entries in the registry
+// everything goes into HKCU (current user) so we dont need admin rights
+//
+// the registry layout per extension looks like this:
+//   HKCU\Software\Classes\SystemFileAssociations\.mp4\shell\WCC
+//       MUIVerb     = "Convert with WCC"    <- the parent menu label
+//       subcommands = ""                    <- empty string = enable cascade submenu
+//       Icon        = "C:\...\wcc.exe,0"   <- icon from first resource in the exe
+//       shell\
+//           01_mp4\   <- numbered prefix keeps them in a predictable order
+//               MUIVerb = "To MP4"
+//               command\(default) = "C:\...\wcc.exe" convert "%1" mp4
+//           02_mkv\
+//               ...
 internal static class ContextMenu
 {
     private const string RootKey = "WCC";
     private const string ParentMenuLabel = "Convert with WCC";
 
+    // builds the registry path for a given extension
     private static string BuildBase(string ext) =>
         $@"Software\Classes\SystemFileAssociations\{ext}\shell\{RootKey}";
 
+    // installs the context menu for every supported extension
+    // no admin needed, HKCU is per-user
     public static int Install(string exePath)
     {
         exePath = Path.GetFullPath(exePath);
@@ -40,7 +42,7 @@ internal static class ContextMenu
         foreach (var ext in allExts)
         {
             var targets = Formats.TargetsFor(ext).ToArray();
-            if (targets.Length == 0) continue;
+            if (targets.Length == 0) continue; // skip if no targets apply (shouldnt happen but just in case)
 
             WriteExtensionMenu(ext, exePath, targets);
             touched++;
@@ -51,6 +53,7 @@ internal static class ContextMenu
         return 0;
     }
 
+    // removes all the WCC subkeys we added - clean uninstall
     public static int Uninstall()
     {
         var allExts = Formats.VideoExtensions.Concat(Formats.AudioExtensions).ToArray();
@@ -58,7 +61,6 @@ internal static class ContextMenu
 
         foreach (var ext in allExts)
         {
-            var path = BuildBase(ext);
             try
             {
                 using var parent = Registry.CurrentUser.OpenSubKey(
@@ -80,13 +82,14 @@ internal static class ContextMenu
         return 0;
     }
 
+    // writes the cascade menu for a single extension
     private static void WriteExtensionMenu(string ext, string exePath, TargetFormat[] targets)
     {
         var basePath = BuildBase(ext);
 
-        // IMPORTANT: wipe any existing subtree first, otherwise a re-install with
-        // a different format list leaves stale sub-items behind (causing apparent
-        // duplicates in the cascade menu).
+        // always nuke the existing WCC subtree before writing
+        // this is important - if you reinstall after adding/removing formats,
+        // old subkeys with different indexes would stick around and cause duplicates
         try
         {
             using var parentShell = Registry.CurrentUser.OpenSubKey(
@@ -94,29 +97,30 @@ internal static class ContextMenu
             if (parentShell is not null && parentShell.GetSubKeyNames().Contains(RootKey))
                 parentShell.DeleteSubKeyTree(RootKey, throwOnMissingSubKey: false);
         }
-        catch { /* non-fatal - we will overwrite values below */ }
+        catch { /* not fatal, worst case we just overwrite the values */ }
 
-        // Parent cascade key.
+        // write the parent menu key that shows "Convert with WCC"
         using (var parent = Registry.CurrentUser.CreateSubKey(basePath, writable: true))
         {
             parent.SetValue("MUIVerb", ParentMenuLabel, RegistryValueKind.String);
-            parent.SetValue("subcommands", "", RegistryValueKind.String); // empty -> cascade
+            parent.SetValue("subcommands", "", RegistryValueKind.String); // empty = show submenu
             parent.SetValue("Icon", $"\"{exePath}\",0", RegistryValueKind.String);
         }
 
-        // Sub-items live under parent\shell\<ordered_name>.
+        // write one subkey per target format
+        // the numeric prefix keeps them sorted in the order we defined in Formats.cs
         for (int i = 0; i < targets.Length; i++)
         {
             var t = targets[i];
-            // Prefix with an index so the order matches our Formats.Targets array.
-            var subKeyName = $"{i + 1:00}_{t.Id}";
+            var subKeyName = $"{i + 1:00}_{t.Id}"; // e.g. "01_mp4", "02_mkv"
             var subKeyPath = $@"{basePath}\shell\{subKeyName}";
 
             using var sub = Registry.CurrentUser.CreateSubKey(subKeyPath, writable: true);
             sub.SetValue("MUIVerb", t.DisplayName, RegistryValueKind.String);
 
+            // the command that runs when the user clicks the item
+            // %1 is the full path to the file they right-clicked
             using var cmd = sub.CreateSubKey("command", writable: true);
-            // "%1" is the clicked file. Quote everything to handle spaces.
             var command = $"\"{exePath}\" convert \"%1\" {t.Id}";
             cmd.SetValue("", command, RegistryValueKind.String);
         }

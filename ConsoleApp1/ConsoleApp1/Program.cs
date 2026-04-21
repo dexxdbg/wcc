@@ -2,6 +2,7 @@ using System.Diagnostics;
 
 namespace Wcc;
 
+// this is the entry point, basically just reads the first arg and calls the right thing
 internal static class Program
 {
     private static async Task<int> Main(string[] args)
@@ -12,6 +13,8 @@ internal static class Program
         }
         catch (Exception ex)
         {
+            // if something completely unexpected blows up, show it and wait
+            // so the console doesnt just vanish instantly
             Console.Error.WriteLine("Unhandled error: " + ex);
             Console.Error.WriteLine();
             Console.Error.WriteLine("Press any key to close...");
@@ -22,6 +25,7 @@ internal static class Program
 
     private static async Task<int> RunAsync(string[] args)
     {
+        // no args = just print help, dont crash
         if (args.Length == 0)
         {
             PrintUsage();
@@ -31,17 +35,21 @@ internal static class Program
         var cmd = args[0].ToLowerInvariant();
         switch (cmd)
         {
+            // registers the right-click menu entries in the registry
             case "install":
                 return ContextMenu.Install(CurrentExePath());
 
+            // cleans up everything we added to the registry
             case "uninstall":
                 return ContextMenu.Uninstall();
 
+            // lets user pre-download ffmpeg so it doesnt happen mid-conversion
             case "ensure-ffmpeg":
             {
                 var existing = FFmpegManager.Locate();
                 if (existing is not null)
                 {
+                    // already have it, no point downloading again
                     Console.WriteLine($"Already installed, skipping. ({existing})");
                     return 0;
                 }
@@ -49,6 +57,8 @@ internal static class Program
                 return 0;
             }
 
+            // if the user already has ffmpeg somewhere they can just point us at it
+            // saves downloading the whole thing
             case "set-ffmpeg":
                 if (args.Length < 2)
                 {
@@ -57,11 +67,13 @@ internal static class Program
                 }
                 return FFmpegManager.SetFromPath(args[1]);
 
+            // just lists all the formats we support, useful to know what to type in convert
             case "formats":
             case "list":
                 PrintFormats();
                 return 0;
 
+            // this is what the context menu actually calls when you click a format
             case "convert":
                 if (args.Length < 3)
                 {
@@ -83,9 +95,10 @@ internal static class Program
         }
     }
 
+    // gets the real path of this exe even when published as a single file
+    // Process.MainModule is more reliable than Assembly.Location in that case
     private static string CurrentExePath()
     {
-        // Process.MainModule.FileName gives the real .exe even when published single-file.
         var p = Process.GetCurrentProcess().MainModule?.FileName;
         if (!string.IsNullOrEmpty(p)) return p!;
         return Environment.ProcessPath ?? AppContext.BaseDirectory;
