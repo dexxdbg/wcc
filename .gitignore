@@ -1,0 +1,13 @@
+# Build output
+bin/
+obj/
+dist/*.pdb
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# OS
+Thumbs.db
+Desktop.ini
