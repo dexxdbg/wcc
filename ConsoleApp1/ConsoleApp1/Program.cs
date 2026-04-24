@@ -132,8 +132,13 @@ internal static class Program
         foreach (var t in Formats.Targets.Where(t => t.Kind == FormatKind.Audio))
             Console.WriteLine($"    {t.Id,-6}  {t.DisplayName}");
         Console.WriteLine();
+        Console.WriteLine("  Image:");
+        foreach (var t in Formats.Targets.Where(t => t.Kind == FormatKind.Image))
+            Console.WriteLine($"    {t.Id,-6}  {t.DisplayName}");
+        Console.WriteLine();
         Console.WriteLine("Source extensions recognised by the context menu:");
         Console.WriteLine("  Video: " + string.Join(" ", Formats.VideoExtensions));
         Console.WriteLine("  Audio: " + string.Join(" ", Formats.AudioExtensions));
+        Console.WriteLine("  Image: " + string.Join(" ", Formats.ImageExtensions));
     }
 }

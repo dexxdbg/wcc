@@ -12,7 +12,8 @@ internal sealed record TargetFormat(
 internal enum FormatKind
 {
     Video,
-    Audio
+    Audio,
+    Image
 }
 
 internal static class Formats
@@ -33,6 +34,14 @@ internal static class Formats
         ".mp3", ".wav", ".flac", ".ogg", ".m4a",
         ".wma", ".aac", ".opus", ".ac3", ".aiff",
         ".aif", ".mka"
+    };
+
+    // image files - only get image targets, ffmpeg handles these just fine
+    // .jpeg and .jpg are the same thing, both listed so either works
+    public static readonly string[] ImageExtensions =
+    {
+        ".jpg", ".jpeg", ".png", ".webp", ".bmp",
+        ".tiff", ".tif", ".avif", ".ico", ".pnm"
     };
 
     // all the presets - one entry per output format
@@ -141,21 +150,61 @@ internal static class Formats
 
         // mka is just matroska audio container, good for opus streams
         new("mka",  "To MKA (Matroska audio)", FormatKind.Audio,
-            "-vn -c:a libopus -b:a 128k")
+            "-vn -c:a libopus -b:a 128k"),
+
+        // ---- Image ----
+
+        // jpeg is the classic lossy format, q:v 2 is high quality (lower = better for jpeg)
+        new("jpg",  "To JPEG",          FormatKind.Image,
+            "-q:v 2"),
+
+        // png is lossless, great for screenshots and stuff with text/sharp edges
+        new("png",  "To PNG",           FormatKind.Image,
+            ""),
+
+        // webp is googles format, better compression than jpg at the same quality
+        // works in all modern browsers and most image viewers now
+        new("webp", "To WebP",          FormatKind.Image,
+            "-c:v libwebp -quality 90"),
+
+        // bmp is raw uncompressed pixels, huge files but opens everywhere including ancient software
+        new("bmp",  "To BMP",           FormatKind.Image,
+            ""),
+
+        // tiff is lossless like png but more common in professional/print workflows
+        new("tiff", "To TIFF",          FormatKind.Image,
+            ""),
+
+        // ico is the windows icon format, resized to 256x256 which is the standard max size
+        new("ico",  "To ICO",           FormatKind.Image,
+            "-vf scale=256:256"),
+
+        // avif is the newest image format, insane compression - half the size of jpg at same quality
+        // libaom is slow though so dont use this on huge batches
+        new("avif", "To AVIF",          FormatKind.Image,
+            "-c:v libaom-av1 -crf 20 -b:v 0 -still-picture 1"),
+
+        // pnm is a dead simple format, basically raw pixels with a tiny header
+        // useful if youre piping images into other programs that expect it
+        new("pnm",  "To PNM",           FormatKind.Image,
+            "")
     };
 
     // figures out which targets to show for a given source file extension
-    // video files get everything, audio files only get audio targets
-    // also filters out the same format as the source so u dont see "mp4 -> mp4"
+    // video files get video + audio targets, audio files only get audio, images only get images
+    // also filters out the same format as the source so u dont see "jpg -> jpg"
     public static IEnumerable<TargetFormat> TargetsFor(string sourceExt)
     {
         sourceExt = sourceExt.ToLowerInvariant();
         bool isVideo = VideoExtensions.Contains(sourceExt);
         bool isAudio = AudioExtensions.Contains(sourceExt);
+        bool isImage = ImageExtensions.Contains(sourceExt);
         var srcId = sourceExt.TrimStart('.');
 
-        // .aif and .aiff are the same thing, normalize so we dont show aiff->aiff
-        if (srcId == "aif") srcId = "aiff";
+        // normalize aliases so we dont show "aiff -> aiff" or "jpeg -> jpeg"
+        if (srcId == "aif")  srcId = "aiff";
+        if (srcId == "jpeg") srcId = "jpg";
+        if (srcId == "tif")  srcId = "tiff";
 
         foreach (var t in Targets)
         {
@@ -163,11 +212,14 @@ internal static class Formats
             if (string.Equals(t.Id, srcId, StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            // video files show all formats (audio targets extract the audio track)
-            if (isVideo)
+            // video files show video + audio targets (audio targets extract the audio track)
+            if (isVideo && (t.Kind == FormatKind.Video || t.Kind == FormatKind.Audio))
                 yield return t;
             // audio files only get audio targets, no point showing "To MP4" for an mp3
             else if (isAudio && t.Kind == FormatKind.Audio)
+                yield return t;
+            // image files only get image targets
+            else if (isImage && t.Kind == FormatKind.Image)
                 yield return t;
         }
     }
