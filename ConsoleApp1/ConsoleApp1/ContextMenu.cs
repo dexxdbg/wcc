@@ -36,7 +36,7 @@ internal static class ContextMenu
             return 1;
         }
 
-        var allExts = Formats.VideoExtensions.Concat(Formats.AudioExtensions).ToArray();
+        var allExts = Formats.VideoExtensions.Concat(Formats.AudioExtensions).Concat(Formats.ImageExtensions).ToArray();
         int touched = 0;
 
         foreach (var ext in allExts)
@@ -56,7 +56,7 @@ internal static class ContextMenu
     // removes all the WCC subkeys we added - clean uninstall
     public static int Uninstall()
     {
-        var allExts = Formats.VideoExtensions.Concat(Formats.AudioExtensions).ToArray();
+        var allExts = Formats.VideoExtensions.Concat(Formats.AudioExtensions).Concat(Formats.ImageExtensions).ToArray();
         int removed = 0;
 
         foreach (var ext in allExts)
