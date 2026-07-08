@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Threading;
 
 namespace Wcc;
 
@@ -64,6 +65,14 @@ internal static class FFmpegManager
             return 3;
         }
 
+        // matching the filename isnt enough - make sure it actually runs and looks like ffmpeg
+        // before we accept it, otherwise the failure only shows up later mid-conversion
+        if (!LooksLikeWorkingFfmpeg(userPath))
+        {
+            Console.Error.WriteLine($"'{userPath}' doesn't look like a working ffmpeg build (running it with '-version' failed).");
+            return 5;
+        }
+
         Directory.CreateDirectory(AppDataDir);
 
         try
@@ -80,6 +89,43 @@ internal static class FFmpegManager
         return 0;
     }
 
+    // quick sanity check that a given exe is actually a runnable ffmpeg build,
+    // not just a file that happens to be named ffmpeg.exe
+    private static bool LooksLikeWorkingFfmpeg(string path)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = path,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("-version");
+
+            using var proc = Process.Start(psi);
+            if (proc is null) return false;
+            if (!proc.WaitForExit(5000))
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { }
+                return false;
+            }
+            return proc.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    // only one wcc process should ever be downloading/installing ffmpeg at a time -
+    // otherwise two conversions kicked off close together (e.g. two context menu
+    // clicks before ffmpeg exists) would both write to the same temp/zip/exe paths
+    // at once and corrupt each other's copy
+    private static readonly Mutex SetupMutex = new(initiallyOwned: false, name: "WCC_FFmpeg_Setup_Mutex");
+
     // main entry point - makes sure ffmpeg exists, downloading if needed
     // called automatically before every conversion so users dont have to think about it
     public static async Task<string> EnsureAsync()
@@ -88,6 +134,35 @@ internal static class FFmpegManager
         if (existing is not null)
             return existing;
 
+        bool acquired;
+        try
+        {
+            acquired = SetupMutex.WaitOne(TimeSpan.FromMinutes(20));
+        }
+        catch (AbandonedMutexException)
+        {
+            // whoever held it before crashed mid-download - we now own it,
+            // Locate() below will tell us if its output is actually usable
+            acquired = true;
+        }
+
+        try
+        {
+            // another process may have finished the download while we were waiting on the mutex
+            existing = Locate();
+            if (existing is not null)
+                return existing;
+
+            return await DownloadAndInstallAsync();
+        }
+        finally
+        {
+            if (acquired) SetupMutex.ReleaseMutex();
+        }
+    }
+
+    private static async Task<string> DownloadAndInstallAsync()
+    {
         Directory.CreateDirectory(AppDataDir);
 
         Console.WriteLine("FFmpeg not found. Downloading static build (once).");

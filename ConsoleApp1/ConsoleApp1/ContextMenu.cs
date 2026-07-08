@@ -54,28 +54,48 @@ internal static class ContextMenu
     }
 
     // removes all the WCC subkeys we added - clean uninstall
+    //
+    // this scans every extension actually registered under SystemFileAssociations
+    // rather than just the extensions Formats.cs currently knows about. that matters
+    // across upgrades: if a future version drops or renames an extension, a stale
+    // WCC entry from an older install would otherwise never get cleaned up since it
+    // wouldn't be in the current extension list anymore.
     public static int Uninstall()
     {
-        var allExts = Formats.VideoExtensions.Concat(Formats.AudioExtensions).Concat(Formats.ImageExtensions).ToArray();
         int removed = 0;
 
-        foreach (var ext in allExts)
+        try
         {
-            try
+            using var root = Registry.CurrentUser.OpenSubKey(
+                @"Software\Classes\SystemFileAssociations", writable: true);
+            if (root is null)
             {
-                using var parent = Registry.CurrentUser.OpenSubKey(
-                    $@"Software\Classes\SystemFileAssociations\{ext}\shell", writable: true);
-                if (parent is null) continue;
-                if (parent.GetSubKeyNames().Contains(RootKey))
+                Console.WriteLine("Removed context menu from 0 extension(s).");
+                return 0;
+            }
+
+            foreach (var ext in root.GetSubKeyNames())
+            {
+                try
                 {
-                    parent.DeleteSubKeyTree(RootKey, throwOnMissingSubKey: false);
-                    removed++;
+                    using var shell = root.OpenSubKey($@"{ext}\shell", writable: true);
+                    if (shell is null) continue;
+                    if (shell.GetSubKeyNames().Contains(RootKey))
+                    {
+                        shell.DeleteSubKeyTree(RootKey, throwOnMissingSubKey: false);
+                        removed++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"  failed for {ext}: {ex.Message}");
                 }
             }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"  failed for {ext}: {ex.Message}");
-            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Uninstall failed: {ex.Message}");
+            return 1;
         }
 
         Console.WriteLine($"Removed context menu from {removed} extension(s).");
